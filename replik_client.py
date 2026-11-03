@@ -11,8 +11,10 @@ from typing import Any, Dict, List, Optional, Set
 try:
     import zeep
     import zeep.helpers
+    from zeep import Settings
 except ImportError:
     zeep = None
+    Settings = None
 
 
 class ReplikClient:
@@ -48,8 +50,14 @@ class ReplikClient:
                 "Pre spustenie klienta je potrebná knižnica 'zeep'. "
                 "Nainštalujte ju príkazom: pip install zeep"
             )
+
         wsdl_url = self.WSDL_PROD if use_production else self.WSDL_TEST
-        self.client = zeep.Client(wsdl=wsdl_url)
+
+        # The IS REPLIK WSDL can be slightly stricter than the actual SOAP payloads in
+        # production. Setting Zeep to non-strict mode prevents XML parser errors for
+        # additional / reordered elements in response payloads.
+        settings = Settings(strict=False)
+        self.client = zeep.Client(wsdl=wsdl_url, settings=settings)
 
     def fetch_konania_pre_obdobie(
         self,

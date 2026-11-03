@@ -23,6 +23,10 @@ def get_client() -> ReplikClient:
 
 if "konania" not in st.session_state:
     st.session_state.konania = []
+if "detail" not in st.session_state:
+    st.session_state.detail = None
+if "detail_id" not in st.session_state:
+    st.session_state.detail_id = None
 
 with st.form("vyhladavanie"):
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -51,17 +55,17 @@ if hladat:
                     datum_do=datum_do.isoformat(),
                     max_stranok=int(max_stranok),
                 )
-            st.session_state.detail_id = None
             st.session_state.detail = None
+            st.session_state.detail_id = None
         except Exception as exc:
             st.error(f"Nepodarilo sa načítať konania: {exc}")
+            st.session_state.konania = []
 
 konania = st.session_state.konania
 if konania:
     st.success(f"Načítaných záznamov: {len(konania)}")
     st.caption("Kliknutím na riadok zobrazíte detail konkrétneho konania.")
 
-    # on_select/selection_mode vyžadujú Streamlit 1.35 alebo novší.
     selection = st.dataframe(
         konania,
         key="konania_tabulka",
