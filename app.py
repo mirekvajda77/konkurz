@@ -11,8 +11,8 @@ from replik_client import ReplikClient
 st.set_page_config(page_title="IS REPLIK – konania", page_icon="📄", layout="wide")
 st.title("IS REPLIK – vyhľadávanie konaní")
 st.write(
-    "Vyhľadajte konania podľa dátumu začatia. Kliknite na riadok v tabuľke "
-    "a aplikácia načíta detail konania."
+    "Vyhľadajte konania podľa dátumu začatia. Potom vyberte konkrétne konanie zo zoznamu "
+    "a aplikácia načíta jeho detail."
 )
 
 
@@ -64,43 +64,41 @@ if hladat:
 konania = st.session_state.konania
 if konania:
     st.success(f"Načítaných záznamov: {len(konania)}")
-    st.caption("Kliknutím na riadok zobrazíte detail konkrétneho konania.")
 
-    selection = st.dataframe(
-        konania,
-        key="konania_tabulka",
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-    )
+    options = [
+        f"{row.get('Id') or '-'} | {row.get('Dlznik') or '-'} | {row.get('SpisovaZnackaSudu') or '-'}"
+        for row in konania
+    ]
+    selected_label = st.selectbox("Vyber konanie", options)
+    selected_index = options.index(selected_label)
+    selected = konania[selected_index]
 
-    selected_rows = selection.selection.rows
-    if selected_rows:
-        selected = konania[selected_rows[0]]
-        konanie_id: Any = selected.get("Id")
-        if konanie_id is None or not str(konanie_id).strip():
-            st.warning("Vybraný záznam neobsahuje ID potrebné na načítanie detailu.")
-        else:
-            if st.session_state.get("detail_id") != str(konanie_id):
-                try:
-                    with st.spinner("Načítavam detail konania…"):
-                        detail = get_client().get_konanie_detail(str(konanie_id))
-                    st.session_state.detail_id = str(konanie_id)
-                    st.session_state.detail = detail
-                except Exception as exc:
-                    st.session_state.detail_id = str(konanie_id)
-                    st.session_state.detail = None
-                    st.error(f"Nepodarilo sa načítať detail konania: {exc}")
+    konanie_id: Any = selected.get("Id")
+    if konanie_id is None or not str(konanie_id).strip():
+        st.warning("Vybraný záznam neobsahuje ID potrebné na načítanie detailu.")
+    else:
+        if st.session_state.get("detail_id") != str(konanie_id):
+            try:
+                with st.spinner("Načítavam detail konania…"):
+                    detail = get_client().get_konanie_detail(str(konanie_id))
+                st.session_state.detail_id = str(konanie_id)
+                st.session_state.detail = detail
+            except Exception as exc:
+                st.session_state.detail_id = str(konanie_id)
+                st.session_state.detail = None
+                st.error(f"Nepodarilo sa načítať detail konania: {exc}")
 
-            detail = st.session_state.get("detail")
-            if detail is not None:
-                st.subheader("Detail konania")
-                st.caption(
-                    f"{selected.get('Dlznik') or 'Dlžník neuvedený'} · "
-                    f"{selected.get('SpisovaZnackaSudu') or 'Spisová značka neuvedená'}"
-                )
-                st.json(detail, expanded=True)
+        detail = st.session_state.get("detail")
+        if detail is not None:
+            st.subheader("Detail konania")
+            st.caption(
+                f"{selected.get('Dlznik') or 'Dlžník neuvedený'} · "
+                f"{selected.get('SpisovaZnackaSudu') or 'Spisová značka neuvedená'}"
+            )
+            st.json(detail, expanded=True)
+
+    st.subheader("Výsledky")
+    st.dataframe(konania, use_container_width=True, hide_index=True)
 
     output = io.StringIO()
     writer = csv.DictWriter(
