@@ -19,15 +19,14 @@ except ImportError:
 class ReplikClient:
     """Klient pre verejné SOAP webové služby IS REPLIK s podporou exportu do CSV."""
 
-    WSDL_PROD = "https://" + "replik-ws.justice.sk/ru-verejnost-ws/konanieService.wsdl"
-    WSDL_TEST = "https://" + "replik-wst.justice.sk/ru-verejnost-ws/konanieService.wsdl"
+    WSDL_PROD = "https://replik-ws.justice.sk/ru-verejnost-ws/konanieService.wsdl"
 
     # Množina požadovaných typov konaní pre právnické osoby
     TARGET_TYPES = {"KONKURZ", "MALYKONKURZ", "RESTRUKTURALIZACIA"}
 
     # Názvy polí pre CSV export
     CSV_FIELDNAMES = [
-        "Id",  
+        "Id",
         "SpisovaZnackaSudu",
         "Typ",
         "StavKonania",
@@ -46,13 +45,12 @@ class ReplikClient:
         "Poznamka",
     ]
 
-    def __init__(self, use_production: bool = True):
+    def __init__(self):
         if zeep is None:
             raise ImportError(
                 "Pre spustenie klienta je potrebná knižnica 'zeep'. Nainštalujte ju príkazom: pip install zeep"
             )
-        wsdl_url = self.WSDL_PROD if use_production else self.WSDL_TEST
-        self.client = zeep.Client(wsdl=wsdl_url)
+        self.client = zeep.Client(wsdl=self.WSDL_PROD)
 
     def fetch_konania_pre_obdobie(
         self,
@@ -64,7 +62,7 @@ class ReplikClient:
     ) -> List[Dict[str, Any]]:
         """
         Získa konania začaté v zadanom období a vyfiltruje ich podľa zadaných typov.
-        
+
         :param datum_od: Počiatočný dátum (YYYY-MM-DD)
         :param datum_do: Konečný dátum (YYYY-MM-DD)
         :param typy_konania: Množina typov konaní (default: KONKURZ, MALYKONKURZ, RESTRUKTURALIZACIA)
@@ -193,7 +191,7 @@ class ReplikClient:
     ) -> None:
         """
         Uloží zoznam konaní do CSV súboru.
-        
+
         :param konania: Zoznam slovníkov s konaniami
         :param filepath: Cesta k výstupnému CSV súboru
         :param delimiter: Oddeľovač polí (predvolené ';' pre slovenský Excel/Windows)
@@ -221,6 +219,6 @@ class ReplikClient:
 if __name__ == "__main__":
     print("=== IS REPLIK API Klient v2 (s podporou CSV) ===")
     print("Príklad použitia:")
-    print("  client = ReplikClient(use_production=True)")
+    print("  client = ReplikClient()")
     print("  data = client.fetch_konania_pre_obdobie('2026-01-01', '2026-01-31')")
     print("  ReplikClient.export_to_csv(data, 'konkurzy_januar_2026.csv')")
