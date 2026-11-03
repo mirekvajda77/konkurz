@@ -16,6 +16,23 @@ except ImportError:
     zeep = None
 
 
+class _IgnoreCaseNumberElementsPlugin:
+    """Odstráni čísla spisu, ktoré klient v aplikácii nepoužíva."""
+
+    ELEMENT_NAMES = {"SpisovaZnackaSudu", "SpisovaZnackaSpravcu"}
+
+    def ingress(self, envelope, http_headers):
+        # SOAP odpoveď niekedy obsahuje SpisovaZnackaSudu, hoci WSDL
+        # na tomto mieste očakáva SpisovaZnackaSpravcu. Odstránime obe
+        # polia ešte pred deserializáciou, keďže ich aplikácia nepotrebuje.
+        for element in list(envelope.iter()):
+            if element.tag.rsplit("}", 1)[-1] in self.ELEMENT_NAMES:
+                parent = element.getparent()
+                if parent is not None:
+                    parent.remove(element)
+        return envelope, http_headers
+
+
 class ReplikClient:
     """Klient pre verejné SOAP webové služby IS REPLIK s podporou exportu do CSV."""
 
@@ -27,7 +44,6 @@ class ReplikClient:
     # Názvy polí pre CSV export
     CSV_FIELDNAMES = [
         "Id",
-        "SpisovaZnackaSudu",
         "Typ",
         "StavKonania",
         "Dlznik",
@@ -50,7 +66,11 @@ class ReplikClient:
             raise ImportError(
                 "Pre spustenie klienta je potrebná knižnica 'zeep'. Nainštalujte ju príkazom: pip install zeep"
             )
-        self.client = zeep.Client(wsdl=self.WSDL_PROD)
+        self.client = zeep.Client(
+            wsdl=self.WSDL_PROD,
+            settings=zeep.Settings(strict=False),
+            plugins=[_IgnoreCaseNumberElementsPlugin()],
+        )
 
     def fetch_konania_pre_obdobie(
         self,
@@ -95,7 +115,6 @@ class ReplikClient:
                 if typ in typy_konania:
                     vsetky_konania.append({
                         "Id": getattr(item, "Id", None),
-                        "SpisovaZnackaSudu": getattr(item, "SpisovaZnackaSudu", None),
                         "Typ": typ,
                         "StavKonania": getattr(item, "StavKonania", None),
                         "Dlznik": getattr(item, "Dlznik", None),
