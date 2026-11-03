@@ -1,0 +1,199 @@
+"""
+IS REPLIK API Client v2 (Slovensko - Register predinsolvenčných, likvidačných a insolvenčných konaní)
+Podľa oficiálnej Integračnej príručky IS REPLIK API v1.0.12
+
+Knižnica pre SOAP WS: zeep (inštalácia cez 'pip install zeep')
+"""
+
+import csv
+from typing import Any, Dict, List, Optional, Set
+
+try:
+    import zeep
+    import zeep.helpers
+except ImportError:
+    zeep = None
+
+
+class ReplikClient:
+    """Klient pre verejné SOAP webové služby IS REPLIK s podporou exportu do CSV."""
+
+    WSDL_PROD = "https://replik-ws.justice.sk/ru-verejnost-ws/konanieService.wsdl"
+    WSDL_TEST = "https://replik-wst.justice.sk/ru-verejnost-ws/konanieService.wsdl"
+    TARGET_TYPES = {"KONKURZ", "MALYKONKURZ", "RESTRUKTURALIZACIA"}
+
+    CSV_FIELDNAMES = [
+        "Id",
+        "SpisovaZnackaSudu",
+        "Typ",
+        "StavKonania",
+        "Dlznik",
+        "DlznikIco",
+        "SudNazov",
+        "Spravca",
+        "DatumZacatiaKonania",
+        "DatumPoslednejUdalosti",
+        "CES_Firma",
+        "CES_Zmluvy",
+        "CES_PoslednaFaktura",
+        "AS400_Firma",
+        "AS400_Klient",
+        "AS400_PoslednaFaktura",
+        "Poznamka",
+    ]
+
+    def __init__(self, use_production: bool = True):
+        if zeep is None:
+            raise ImportError(
+                "Pre spustenie klienta je potrebná knižnica 'zeep'. "
+                "Nainštalujte ju príkazom: pip install zeep"
+            )
+        wsdl_url = self.WSDL_PROD if use_production else self.WSDL_TEST
+        self.client = zeep.Client(wsdl=wsdl_url)
+
+    def fetch_konania_pre_obdobie(
+        self,
+        datum_od: str,
+        datum_do: str,
+        typy_konania: Optional[Set[str]] = None,
+        max_stranok: int = 5,
+        vysledkov_na_stranku: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Získa konania začaté v období a vyfiltruje ich podľa typu."""
+        if typy_konania is None:
+            typy_konania = self.TARGET_TYPES
+
+        vsetky_konania: List[Dict[str, Any]] = []
+        for stranka in range(max_stranok):
+            response = self.client.service.getKonaniePreObdobie(
+                DatumOd=datum_od,
+                DatumDo=datum_do,
+                Stranka=stranka,
+                VysledkovNaStranku=vysledkov_na_stranku,
+            )
+
+            if not response or not hasattr(response, "KonanieInfoList"):
+                break
+            items = response.KonanieInfoList
+            if not items:
+                break
+
+            for item in items:
+                typ = getattr(item, "Typ", None)
+                if typ in typy_konania:
+                    vsetky_konania.append({
+                        "Id": getattr(item, "Id", None),
+                        "SpisovaZnackaSudu": getattr(item, "SpisovaZnackaSudu", None),
+                        "Typ": typ,
+                        "StavKonania": getattr(item, "StavKonania", None),
+                        "Dlznik": getattr(item, "Dlznik", None),
+                        "DlznikIco": getattr(item, "DlznikIco", None),
+                        "SudNazov": getattr(item, "SudNazov", None),
+                        "Spravca": getattr(item, "Spravca", None),
+                        "DatumZacatiaKonania": str(getattr(item, "DatumZacatiaKonania", "")),
+                        "DatumPoslednejUdalosti": str(getattr(item, "DatumPoslednejUdalosti", "")),
+                    })
+
+            vysledkov_celkom = getattr(response, "VysledkovCelkom", 0)
+            if (stranka + 1) * vysledkov_na_stranku >= vysledkov_celkom:
+                break
+
+        return vsetky_konania
+
+    @staticmethod
+    def normalize_ico(value: Any) -> str:
+        """Normalizuje IČO/SIRET na číslice a doplní štandardnú dĺžku IČO."""
+        digits = "".join(character for character in str(value or "") if character.isdigit())
+        return digits.zfill(8) if digits and len(digits) < 8 else digits
+
+    @classmethod
+    def enrich_with_database_data(
+        cls,
+        konania: List[Dict[str, Any]],
+        ces_records: List[Dict[str, Any]],
+        as400_records: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Páruje CES cez SIRET a AS400 cez c01_ico oproti DlznikIco."""
+        ces_by_ico: Dict[str, List[Dict[str, Any]]] = {}
+        for record in ces_records:
+            ico = cls.normalize_ico(record.get("SIRET"))
+            if ico:
+                ces_by_ico.setdefault(ico, []).append(record)
+
+        as400_by_ico: Dict[str, List[Dict[str, Any]]] = {}
+        for record in as400_records:
+            ico = cls.normalize_ico(record.get("c01_ico"))
+            if ico:
+                as400_by_ico.setdefault(ico, []).append(record)
+
+        def joined_values(records: List[Dict[str, Any]], field: str) -> str:
+            values = dict.fromkeys(
+                str(record[field])
+                for record in records
+                if record.get(field) is not None and str(record[field]).strip()
+            )
+            return "; ".join(values)
+
+        enriched = []
+        for konanie in konania:
+            ico = cls.normalize_ico(konanie.get("DlznikIco"))
+            ces_matches = ces_by_ico.get(ico, [])
+            as400_matches = as400_by_ico.get(ico, [])
+            enriched.append({
+                **konanie,
+                "CES_Firma": joined_values(ces_matches, "c01_name"),
+                "CES_Zmluvy": joined_values(ces_matches, "c10_number"),
+                "CES_PoslednaFaktura": joined_values(ces_matches, "last_invoice"),
+                "AS400_Firma": joined_values(as400_matches, "CLINOM"),
+                "AS400_Klient": joined_values(as400_matches, "CODCLI"),
+                "AS400_PoslednaFaktura": joined_values(as400_matches, "last_fa"),
+                "Poznamka": konanie.get("Poznamka", ""),
+            })
+        return enriched
+
+    def get_konanie_podla_ico(self, ico: str) -> List[Dict[str, Any]]:
+        """Vyhľadá konania podľa IČO dlžníka."""
+        response = self.client.service.getKonaniePodlaICO(
+            Ico=ico,
+            Stranka=0,
+            VysledkovNaStranku=100,
+            TypTriedenia="DatumPoslednejUdalosti",
+        )
+        if hasattr(response, "KonanieInfoList") and response.KonanieInfoList:
+            return [zeep.helpers.serialize_object(item) for item in response.KonanieInfoList]
+        return []
+
+    def get_konanie_detail(self, konanie_id: str) -> Dict[str, Any]:
+        """Získa detail konkrétneho konania podľa jeho ID."""
+        response = self.client.service.getKonanieDetail(KonanieId=konanie_id)
+        return zeep.helpers.serialize_object(response)
+
+    @staticmethod
+    def export_to_csv(
+        konania: List[Dict[str, Any]],
+        filepath: str = "konania_export.csv",
+        delimiter: str = ";",
+    ) -> None:
+        """Uloží zoznam konaní do CSV súboru."""
+        if not konania:
+            print("Zoznam konaní je prázdny. CSV súbor nebol vytvorený.")
+            return
+
+        with open(filepath, mode="w", newline="", encoding="utf-8-sig") as csv_file:
+            writer = csv.DictWriter(
+                csv_file,
+                fieldnames=ReplikClient.CSV_FIELDNAMES,
+                delimiter=delimiter,
+                extrasaction="ignore",
+            )
+            writer.writeheader()
+            writer.writerows(konania)
+        print(f"Úspešne uložených {len(konania)} záznamov do súboru: {filepath}")
+
+
+if __name__ == "__main__":
+    print("=== IS REPLIK API Klient v2 (s podporou CSV) ===")
+    print("Príklad použitia:")
+    print("  client = ReplikClient(use_production=True)")
+    print("  data = client.fetch_konania_pre_obdobie('2026-01-01', '2026-01-31')")
+    print("  ReplikClient.export_to_csv(data, 'konkurzy_januar_2026.csv')")
